@@ -1,15 +1,28 @@
 import express from "express";
-import ejs from "ejs";
 import bodyParser from "body-parser";
 import mongoose, { Schema } from "mongoose";
 import 'dotenv/config';
-import bcrypt from "bcrypt";
-//import encrypt from "mongoose-encryption";
-//import md5 from "md5";
+import session from "express-session";
+import passport from "passport";
+import passportLocalMongoose from "passport-local-mongoose";
+
+//main config
+const app = express();
+app.use(express.static("public"));
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(session({
+    secret: process.env.SECRET,
+    resave: false,
+    saveUninitialized: false
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+const PORT = 3000;
 
 ////Database set up
 const DATABASE_URI = "mongodb://127.0.0.1:27017/userDB";
-
 
 //setting up connection to mongo server and creating (or accessing if already created) todoDB
 mongoose.connect(DATABASE_URI);
@@ -17,31 +30,21 @@ mongoose.connect(DATABASE_URI);
 
 //schema for users
 const userSchema = new Schema({
-    email: {
-        type: String,
-        requried: true
-    },
-    password: {
-        type: String,
-        required: true
-    }
+    email: String,
+    password: String
 });
 
-//establishing encrytpion, specifically encrypting user passwords
-const saltRounds = 10;
-//const secret = process.env.SECRET;
-//userSchema.plugin(encrypt, { secret: secret, encryptedFields: ['password'] });
+//using this plugin to hash and salt passwords and save users to mongoDB database
+userSchema.plugin(passportLocalMongoose);
 
 //collection for all users
 const User = mongoose.model("User", userSchema);
 
+//config passport and passport local
+passport.use(User.createStrategy());
 
-const app = express();
-
-app.use(express.static("public"));
-app.use(bodyParser.urlencoded({ extended: true }));
-
-const PORT = 3000;
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
 
 app.get("/", (req, res) => {
     res.render("home.ejs");
@@ -55,59 +58,63 @@ app.get("/register", (req, res) => {
     res.render("register.ejs");
 });
 
+app.get("/secrets", (req, res) => {
+    //if user is already logged in then render secrets page, if not then redirect to login
+    if (req.isAuthenticated()) {
+        res.render("secrets.ejs");
+    } else {
+        res.redirect("/login");
+    }
+});
+
+app.get("/logout", (req, res) => {
+    req.logout((err) => {
+        if(err){
+            console.log(err);
+        } else{
+            res.redirect("/");
+        }
+    });  
+});
+
 app.post("/register", (req, res) => {
 
-    async function saltHashPassword() {
-        try {
-            const username = req.body.username;
-            const password = req.body.password;
-
-            const salted_hashPass = await bcrypt.hash(password, saltRounds);
-
-            const newUser = new User({
-                email: username,
-                password: salted_hashPass
+    //using passport-local-mongoose package (.register() method) to handle creating + saving new user 
+    //and interacting with mongoose directly
+    User.register({ username: req.body.username }, req.body.password, function (err, user) {
+        if (err) {
+            console.log(err);
+            res.redirect("/register");
+        } else {
+            //if no errors authenticate user using passport.
+            //call back is only triggered if authentication was successful (i.e. set up cookie that saved current logged in session)
+            passport.authenticate("local", { failureRedirect: "/register" })(req, res, () => {
+                //user gets redirected if already logged in through cookie auth
+                res.redirect("/secrets");
             });
-
-            newUser.save();
-            res.render("secrets.ejs");
-
-        } catch (error) {
-            console.log(error);
         }
-    }
-
-    saltHashPassword();
+    })
 
 });
 
 app.post("/login", (req, res) => {
-    const username = req.body.username;
-    const password = req.body.password;
+    const user = new User({
+        username: req.body.username,
+        password: req.body.password
+    });
 
-    async function findExistingUser() {
-        try {
-            const foundUser = await User.findOne({ email: username }).exec();
-
-            //comparing hashed passwords
-            bcrypt.compare(password, foundUser.password, (err, result) => {
-                if (result === true) {
-                    res.render("secrets.ejs");
-                } else {
-                    console.log(err);
-                    res.status(401).json({ err: "password does not match username." });
-                }
+    //using passport to login user and authenticate them
+    req.login(user, (err) => {
+        if(err){
+            console.log(err);
+        } else{
+            passport.authenticate("local", { failureRedirect: "/login" })(req, res, () => {
+                //user gets redirected if already logged in through cookie auth
+                res.redirect("/secrets");
             });
-
-
-
-        } catch (error) {
-            res.status(404).json({ error: `User: '${username}' not found. This user does not exist` });
-            console.log(error);
         }
-    }
+    })
 
-    findExistingUser();
 });
 
 
