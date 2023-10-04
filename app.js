@@ -23,7 +23,7 @@ app.use(passport.session());
 const PORT = 3000;
 
 ////Database set up
-const DATABASE_URI = "mongodb://127.0.0.1:27017/userDB";
+const DATABASE_URI = process.env.DATABASE_URI || "mongodb://127.0.0.1:27017/userDB";
 
 //setting up connection to mongo server and creating (or accessing if already created) todoDB
 mongoose.connect(DATABASE_URI);
