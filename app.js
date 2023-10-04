@@ -33,8 +33,10 @@ mongoose.connect(DATABASE_URI);
 const userSchema = new Schema({
     email: String,
     password: String,
-    googleId: String,
+    googleId: String,   
+    secret: [String]
 });
+
 
 //using this plugin to hash and salt passwords and save users to mongoDB database
 userSchema.plugin(passportLocalMongoose);
@@ -45,21 +47,21 @@ const User = mongoose.model("User", userSchema);
 //config passport and passport local strategy for mongoose
 passport.use(User.createStrategy());
 
-passport.serializeUser(function(user, cb) {
-    process.nextTick(function() {
-      return cb(null, {
-        id: user.id,
-        username: user.username,
-        picture: user.picture
-      });
+passport.serializeUser(function (user, cb) {
+    process.nextTick(function () {
+        return cb(null, {
+            id: user.id,
+            username: user.username,
+            picture: user.picture
+        });
     });
-  });
-  
-  passport.deserializeUser(function(user, cb) {
-    process.nextTick(function() {
-      return cb(null, user);
+});
+
+passport.deserializeUser(function (user, cb) {
+    process.nextTick(function () {
+        return cb(null, user);
     });
-  });
+});
 
 
 //Config for google auth strategy
@@ -100,16 +102,16 @@ app.get("/", (req, res) => {
 //Authenticating requests using passport google strategy
 //Auth on google servers asking for users profile once they logged in. Once successful, google will redirect to "/auth/google/secrets"
 app.get("/auth/google",
-  passport.authenticate("google", { scope: ["profile"] }));
+    passport.authenticate("google", { scope: ["profile"] }));
 
 
 //Here we authenticate locally and save session
-app.get("/auth/google/secrets", 
-  passport.authenticate("google", { failureRedirect: "/login" }),
-  function(req, res) {
-    // Successful authentication, redirect to secrets page.
-    res.redirect("/secrets");
-  });
+app.get("/auth/google/secrets",
+    passport.authenticate("google", { failureRedirect: "/login" }),
+    function (req, res) {
+        // Successful authentication, redirect to secrets page.
+        res.redirect("/secrets");
+    });
 
 app.get("/login", (req, res) => {
     res.render("login.ejs");
@@ -119,14 +121,38 @@ app.get("/register", (req, res) => {
     res.render("register.ejs");
 });
 
-app.get("/secrets", (req, res) => {
-    //if user is already logged in then render secrets page, if not then redirect to login
+app.get("/secrets", async (req, res) => {
+    try {
+        const usersWithSecrets = await User.find({secret: {$ne:null} }); //returns array of user secrets
+        res.render("secrets.ejs", {
+            allUserSecrets: usersWithSecrets
+        });
+    } catch (error) {
+        console.log(error);
+    }
+    
+});
+
+app.get("/submit", (req, res) => {
     if (req.isAuthenticated()) {
-        res.render("secrets.ejs");
+        res.render("submit.ejs");
     } else {
         res.redirect("/login");
     }
-});
+})
+
+app.post("/submit", async (req, res) => {
+    try {
+        const submittedSecret = req.body.secret;
+        const userId = req.user.id;
+        //a single user can submit more than one secret so we want to push the update into a secrets array associated with the user
+        const userUpdateSecret = await User.findByIdAndUpdate(userId, {$push: { secret: submittedSecret }});
+        userUpdateSecret.save();
+        res.redirect("/secrets");
+    } catch (error) {
+        console.log(error);
+    }
+})
 
 app.get("/logout", (req, res) => {
     req.logout((err) => {
